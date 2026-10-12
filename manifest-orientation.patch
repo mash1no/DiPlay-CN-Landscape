@@ -1,0 +1,11 @@
+--- a/common/src/main/AndroidManifest.xml
++++ b/common/src/main/AndroidManifest.xml
+@@ -81,7 +81,7 @@
+             android:exported="true"
+             android:launchMode="singleTask"
+             android:resizeableActivity="true"
+-            android:screenOrientation="fullSensor"
++            android:screenOrientation="reverseLandscape"
+             android:theme="@style/Theme.Xcertplay"
+             android:windowSoftInputMode="adjustResize">
+             <intent-filter>

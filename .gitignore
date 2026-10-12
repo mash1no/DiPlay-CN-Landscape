@@ -1,0 +1,11 @@
+dist/
+downloads/
+__pycache__/
+*.pyc
+*.p12
+*.pfx
+*.jks
+*.keystore
+*signing-password*
+local.properties
+.env

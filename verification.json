@@ -1,0 +1,26 @@
+{
+  "time": "2026-10-11T18:03:50.933175+08:00",
+  "version_name": "0.2.17-cn.2-landscape.2",
+  "package": "com.shihab.diplay.cn.landscape",
+  "label": "DiPlay 横屏修正版",
+  "bytes": 18323730,
+  "sha256": "ca5015804cbfad6185a7ce0cfe4012067d5775e3f50afecb42585f117a6bb939",
+  "orientation_changes": [
+    {
+      "component": "com.shilapi.xcertplay.CarPlayHostActivity",
+      "attribute": "screenOrientation",
+      "before": 10,
+      "after": 8
+    }
+  ],
+  "unchanged_non_signing_entries": 413,
+  "signature_verified": true,
+  "zip_integrity_verified": true,
+  "apk_filename": "DiPlay-cn-v0.2.17-cn.2-landscape.2.apk",
+  "installed_on_android": {
+    "date": "2026-10-11",
+    "android": "7.1.2",
+    "result": "ADB returned Success"
+  },
+  "scope": "APK build checks and installation only. Physical rotation of final reverseLandscape version, prolonged iPhone screen-lock stability and full wireless loss recovery remain unverified."
+}
