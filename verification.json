@@ -1,26 +1,121 @@
 {
-  "time": "2026-10-11T18:03:50.933175+08:00",
-  "version_name": "0.2.17-cn.2-landscape.2",
+  "recorded_at": "2026-10-14T21:40:12.661751+08:00",
+  "version": "0.2.17-cn.2-landscape.3",
+  "version_code": 112,
   "package": "com.shihab.diplay.cn.landscape",
-  "label": "DiPlay 横屏修正版",
-  "bytes": 18323730,
-  "sha256": "ca5015804cbfad6185a7ce0cfe4012067d5775e3f50afecb42585f117a6bb939",
-  "orientation_changes": [
-    {
-      "component": "com.shilapi.xcertplay.CarPlayHostActivity",
-      "attribute": "screenOrientation",
-      "before": 10,
-      "after": 8
-    }
-  ],
-  "unchanged_non_signing_entries": 413,
-  "signature_verified": true,
-  "zip_integrity_verified": true,
-  "apk_filename": "DiPlay-cn-v0.2.17-cn.2-landscape.2.apk",
-  "installed_on_android": {
-    "date": "2026-10-11",
-    "android": "7.1.2",
-    "result": "ADB returned Success"
+  "upstream_commit": "48a8330e86926ad69647f0eed0bcb349264b8bec",
+  "apk": {
+    "filename": "DiPlay-cn-v0.2.17-cn.2-landscape.3.apk",
+    "bytes": 18377199,
+    "sha256": "e61686e97846819278865675dc815e8947fced298d2089eacdb8efd394fdff3e",
+    "orientation": "reverseLandscape (8)",
+    "signature_verified": true,
+    "native_zip_alignment": "16 KiB",
+    "original_runtime_assets_identical": true
   },
-  "scope": "APK build checks and installation only. Physical rotation of final reverseLandscape version, prolonged iPhone screen-lock stability and full wireless loss recovery remain unverified."
+  "source": {
+    "filename": "DiPlay-CN-landscape.3-corresponding-source.zip",
+    "bytes": 6897443,
+    "sha256": "9e1c718833d99734b5d3d2fa2a341d248e33ee5f2989c9a440507393f7b753dc",
+    "complete_corresponding_source": true,
+    "signing_and_local_authentication_files_excluded": true
+  },
+  "build": {
+    "signed_standalone_release": "passed",
+    "debug_assemble": [
+      "mobile",
+      "home",
+      "maphost"
+    ],
+    "lint": {
+      "mobile": {
+        "errors": 0,
+        "warnings": 18
+      },
+      "samples/home": {
+        "errors": 0,
+        "warnings": 5
+      },
+      "samples/maphost": {
+        "errors": 0,
+        "warnings": 2
+      }
+    },
+    "new_regressions": {
+      "PhoneBluetoothReceiverTest": 3,
+      "SessionPowerLocksTest": 6,
+      "WirelessStartupRecoveryTest": 9,
+      "failures": 0
+    },
+    "unit_tests": {
+      "shared": {
+        "tests": 1273,
+        "failures": 2,
+        "skipped": 1
+      },
+      "common": {
+        "tests": 1123,
+        "failures": 1,
+        "skipped": 1
+      },
+      "home": {
+        "tests": 4,
+        "failures": 0,
+        "skipped": 0
+      }
+    },
+    "whole_ci_passed": false,
+    "unchanged_upstream_reproduces_same_three_dual_stack_network_test_failures": true,
+    "failure_root_cause": "unknown"
+  },
+  "hardware": {
+    "date": "2026-10-14",
+    "android_model": "HONOR 70 / FNE-AN00",
+    "android_version": "14",
+    "api": 34,
+    "abi_tested": "arm64-v8a",
+    "iphone_model": "not recorded",
+    "ios_version": "not recorded",
+    "transport": "Android system hotspot, 5 GHz / WPA2; Bluetooth iAP2 bootstrap",
+    "system_auto_rotation": "enabled during physical rotation test",
+    "tests": {
+      "physical_rotation": {
+        "result": "passed_this_observation",
+        "observer_started": "2026-10-14T20:55:17.532466+08:00",
+        "observer_finished": "2026-10-14T20:56:47.540356+08:00",
+        "duration_seconds": 90,
+        "limit": "One user-assisted physical-rotation run on HONOR FNE-AN00/API 34 with manual Android hotspot; no broader stability guarantee"
+      },
+      "iphone_screen_lock": {
+        "result": "passed_this_observation",
+        "observer_started": "2026-10-14T21:01:32.335651+08:00",
+        "observer_finished": "2026-10-14T21:04:32.348407+08:00",
+        "duration_seconds": 180,
+        "limit": "One user-assisted lock/unlock test; exact iOS version/model not provided; occasional or long-duration disconnections remain outside this observation"
+      },
+      "automatic_recovery": {
+        "result": "passed_this_observation",
+        "observer_started": "2026-10-14T21:07:38.407972+08:00",
+        "observer_finished": "2026-10-14T21:10:38.417002+08:00",
+        "duration_seconds": 180,
+        "limit": "One full wireless-loss/recovery run in foreground on the configured Android system hotspot; time measured from failure detection, not from radio restoration",
+        "failure_detection_to_first_frame_seconds": 10.488,
+        "radio_restore_to_first_frame_seconds": null
+      },
+      "cold_open_auto_connect": {
+        "result": "passed_this_observation",
+        "observer_started": "2026-10-14T21:16:42.802310+08:00",
+        "observer_finished": "2026-10-14T21:18:12.812881+08:00",
+        "duration_seconds": 90,
+        "limit": "One cold app launch with paired iPhone and Android system hotspot already enabled; independent Bluetooth wake and boot/hotspot startup not covered"
+      }
+    }
+  },
+  "known_limits": [
+    "One phone pair, one observed run per core scenario; no long-duration reliability guarantee",
+    "Wi-Fi Direct group setup failed on this HONOR; hardware passes use Android system hotspot",
+    "System hotspot must already be enabled; boot and automatic hotspot enabling untested",
+    "Independent Bluetooth wake from desktop is not yet established",
+    "Background recovery, other Android/iOS versions, and new-phone car-audio routing untested"
+  ]
 }

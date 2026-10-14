@@ -1,0 +1,615 @@
+--- a/common/src/main/AndroidManifest.xml
++++ b/common/src/main/AndroidManifest.xml
+@@ -6,6 +6,7 @@
+     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+ 
+     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
++    <uses-permission android:name="android.permission.WAKE_LOCK" />
+     <!-- Optional, user-authorized installation of a released update APK. -->
+     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+@@ -81,7 +82,7 @@
+             android:exported="true"
+             android:launchMode="singleTask"
+             android:resizeableActivity="true"
+-            android:screenOrientation="fullSensor"
++            android:screenOrientation="reverseLandscape"
+             android:theme="@style/Theme.Xcertplay"
+             android:windowSoftInputMode="adjustResize">
+             <intent-filter>
+--- a/common/src/main/java/com/shilapi/xcertplay/CarPlayHostActivity.kt
++++ b/common/src/main/java/com/shilapi/xcertplay/CarPlayHostActivity.kt
+@@ -5026,6 +5026,7 @@
+                     }
+                     activeAirPlaySession = session
+                     CarPlayBackgroundSession.active = true
++                    CarPlayBackgroundSession.allowPhoneRecovery(this@CarPlayHostActivity, false)
+                     callPopupSessionReady = true
+                     updateCallPopupGuard()
+                     reconnectAttempts = 0
+@@ -5127,13 +5128,17 @@
+     private fun createStatusReporter(
+         controllerGeneration: Int,
+     ): (CarPlayStatus) -> Unit = report@{ status ->
+-        if (controllerGeneration != restartGeneration) return@report
++        if (controllerGeneration != restartGeneration || !CarPlayBackgroundSession.isOwner(this)) return@report
+         if (status is CarPlayStatus.Failed || status is CarPlayStatus.ControlEnded) {
++            val needsUser = status is CarPlayStatus.Failed &&
++                (status.wifiResetRequired || status.startupFailure == WirelessStartupFailure.HOTSPOT_CONFIGURATION)
++            if (needsUser || !startupRetryStopped) CarPlayBackgroundSession.allowPhoneRecovery(this, !needsUser)
+             callPopupSessionReady = false
+             updateCallPopupGuard()
+         }
+         if (menuOpen) {
+             if (status is CarPlayStatus.Failed) failurePendingAfterMenu = status
++            if (status is CarPlayStatus.ControlEnded) recoveryPendingAfterMenu = true
+             return@report
+         }
+         updateHotspotStatus(status)
+@@ -5151,6 +5156,7 @@
+                 }
+                 reconnectAfterLoss(description, status.startupFailure)
+             }
++            CarPlayStatus.ControlEnded -> reconnectAfterLoss(description)
+             else -> Unit
+         }
+     }
+@@ -5190,7 +5196,7 @@
+         }
+         MapMirrors.reapply()
+         CarPlayBackgroundSession.store(snapshot.controller, snapshot.sink, snapshot.width, snapshot.height,
+-            this, snapshot.display) { completion ->
++            this, snapshot.display, phoneWake = { mainHandler.post { resumeLostSessionForPhone() } }) { completion ->
+             runOnUiThread {
+                 shutdown(false, "DiPlay disconnect", completion)
+                 finish()
+@@ -5328,14 +5334,16 @@
+         )
+         sessionDisplay = display
+         videoView?.let { updateVideoLayout(it.width, it.height) }
+-        CarPlayBackgroundSession.store(next, renderer, size.width, size.height, this, display) { completion ->
++        CarPlayBackgroundSession.store(next, renderer, size.width, size.height, this, display,
++            phoneWake = { mainHandler.post { resumeLostSessionForPhone() } }) { completion ->
+             runOnUiThread {
+                 shutdown(terminateProcess = false, reason = "DiPlay disconnect", completion = completion)
+                 finish()
+             }
+         }
+         try {
+-            ContextCompat.startForegroundService(this, Intent(this, DiPlaySessionService::class.java))
++            ContextCompat.startForegroundService(this, Intent(this, DiPlaySessionService::class.java)
++                .putExtra(DiPlaySessionService.EXTRA_WIRELESS, config.transport == CarPlayTransport.WIRELESS))
+             next.start()
+         } catch (error: RuntimeException) {
+             appendLog("Connection could not start: ${error.javaClass.simpleName}")
+@@ -5640,6 +5648,7 @@
+         if (!CarPlayBackgroundSession.isOwner(this)) return
+         if (menuOpen) recoveryPendingAfterMenu = true
+         if (shuttingDown.get() || menuOpen || handshakeResetInProgress || startupRetryStopped) return
++        CarPlayBackgroundSession.allowPhoneRecovery(this, startupFailure != WirelessStartupFailure.HOTSPOT_CONFIGURATION)
+         if (reconnectScheduled) return
+         val startupDelay = if (startupFailure != null && startupFailure != WirelessStartupFailure.HOTSPOT_CONFIGURATION)
+             startupRetryBudget.nextDelayMillis() else null
+@@ -5649,6 +5658,15 @@
+             setConnectionStage(if (startupFailure == WirelessStartupFailure.HOTSPOT_CONFIGURATION) reason
+                 else "$reason\n${getString(R.string.wireless_startup_retries_exhausted)}")
+             appendLog("wireless startup recovery stopped generation=$restartGeneration reason=$startupFailure retries=${startupRetryBudget.retries}")
++            if (startupFailure != WirelessStartupFailure.HOTSPOT_CONFIGURATION &&
++                DiPlayPreferences.connectOnPhoneBluetooth(this) && DiPlayPreferences.phoneAddress(this) != null) {
++                // Keep attempts bounded in each burst, then wait before probing the selected
++                // phone again. This also covers cars that omit the next ACL_CONNECTED broadcast.
++                val waitingGeneration = restartGeneration
++                mainHandler.postDelayed({
++                    if (generationStillRecoverable(controllerGeneration = waitingGeneration)) resumeLostSessionForPhone()
++                }, 90_000L)
++            }
+             return
+         }
+         reconnectScheduled = true
+@@ -5682,6 +5700,24 @@
+             },
+             delayMillis,
+         )
++    }
++
++    private fun generationStillRecoverable(controllerGeneration: Int): Boolean =
++        controllerGeneration == restartGeneration && startupRetryStopped &&
++            !shuttingDown.get() && CarPlayBackgroundSession.isOwner(this) &&
++            CarPlayBackgroundSession.canResumeForPhone() &&
++            DiPlayPreferences.connectOnPhoneBluetooth(this) && DiPlayPreferences.phoneAddress(this) != null
++
++    internal fun resumeLostSessionForPhone() {
++        if (!CarPlayBackgroundSession.isOwner(this) || !CarPlayBackgroundSession.canResumeForPhone() ||
++            shuttingDown.get() || handshakeResetInProgress ||
++            !DiPlayPreferences.connectOnPhoneBluetooth(this) || DiPlayPreferences.phoneAddress(this) == null) return
++        startupRetryBudget.manualRetry()
++        startupRetryStopped = false
++        startupFailureGeneration = -1
++        reconnectAttempts = 0
++        startupRetryButton?.visibility = View.GONE
++        reconnectAfterLoss("Selected iPhone recovery requested")
+     }
+ 
+     /** Full-stack fallback when an AirPlay-only reconnect is unavailable. */
+@@ -6359,8 +6395,19 @@
+     private var stopAction: (((() -> Unit)) -> Unit)? = null
+     private var stopping = false
+     private var owner: Any? = null
++    private var phoneWakeAction: (() -> Unit)? = null
++    private var phoneRecoveryAllowed = false
+     @Synchronized fun isOwner(candidate: Any): Boolean = owner === candidate
+     @Synchronized fun hasSession(): Boolean = stopAction != null || stopping
++    @Synchronized fun allowPhoneRecovery(candidate: Any, allowed: Boolean) {
++        if (owner === candidate && !stopping) phoneRecoveryAllowed = allowed
++    }
++    @Synchronized fun canResumeForPhone(): Boolean = stopAction != null && !stopping && phoneRecoveryAllowed && phoneWakeAction != null
++    fun resumeForPhone(): Boolean {
++        val action = synchronized(this) { if (canResumeForPhone()) phoneWakeAction else null } ?: return false
++        action()
++        return true
++    }
+     private val stopWaiters = mutableListOf<() -> Unit>()
+ 
+     fun stop(completion: () -> Unit = {}) {
+@@ -6407,9 +6454,19 @@
+     @Synchronized
+     fun store(controller: CarPlayController, sink: AndroidMediaSink, width: Int, height: Int,
+         owner: Any, display: CarPlaySessionDisplay, stop: (() -> Unit) -> Unit) {
+-        if (this.controller !== controller) callPopupReady = false
++        store(controller, sink, width, height, owner, display, phoneWake = null, stop = stop)
++    }
++
++    @Synchronized
++    fun store(controller: CarPlayController, sink: AndroidMediaSink, width: Int, height: Int,
++        owner: Any, display: CarPlaySessionDisplay, phoneWake: (() -> Unit)?, stop: (() -> Unit) -> Unit) {
++        if (this.controller !== controller) {
++            callPopupReady = false
++            phoneRecoveryAllowed = false
++        }
+         this.stopAction = stop
+         this.owner = owner
++        this.phoneWakeAction = phoneWake
+         this.controller = controller
+         this.sink = sink
+         this.width = width
+@@ -6423,7 +6480,7 @@
+         if (expected != null && controller !== expected) return
+         controller = null
+         sink = null
+-        if (!keepOwner) { stopAction = null; owner = null }
++        if (!keepOwner) { stopAction = null; owner = null; phoneWakeAction = null; phoneRecoveryAllowed = false }
+         active = false
+         callPopupReady = false
+         width = 0
+--- a/common/src/main/java/com/shilapi/xcertplay/DiPlaySessionService.kt
++++ b/common/src/main/java/com/shilapi/xcertplay/DiPlaySessionService.kt
+@@ -15,10 +15,17 @@
+ 
+ /** Keeps an explicitly started connection alive when another car app is in the foreground. */
+ class DiPlaySessionService : Service() {
++    private val powerLocks by lazy { SessionPowerLocks(applicationContext) }
+     override fun onBind(intent: Intent?): IBinder? = null
+     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+         if (intent?.action == ACTION_STOP) {
++            powerLocks.release()
+             CarPlayBackgroundSession.stop()
++            stopSelf()
++            return START_NOT_STICKY
++        }
++        if (!CarPlayBackgroundSession.hasSession()) {
++            powerLocks.release()
+             stopSelf()
+             return START_NOT_STICKY
+         }
+@@ -52,16 +59,23 @@
+             }
+             startForeground(1, notification, types)
+         } else startForeground(1, notification)
++        powerLocks.acquire(intent?.getBooleanExtra(EXTRA_WIRELESS, false) == true)
+         return START_NOT_STICKY
+     }
+     override fun onTaskRemoved(rootIntent: Intent?) {
+         // BYD's recents force-stops the package ~10 ms after removing the task: end guidance first.
+         com.shilapi.xcertplay.hud.BydNavigationOutputs.endNow()
++        powerLocks.release()
+         CarPlayBackgroundSession.stop()
+         stopSelf()
+     }
++    override fun onDestroy() {
++        powerLocks.release()
++        super.onDestroy()
++    }
+     companion object {
+         const val ACTION_STOP = "com.shihab.diplay.DISCONNECT"
++        const val EXTRA_WIRELESS = "com.shihab.diplay.WIRELESS_SESSION"
+         private const val CHANNEL = "diplay_connection"
+     }
+ }
+--- a/common/src/main/java/com/shilapi/xcertplay/PhoneBluetoothReceiver.kt
++++ b/common/src/main/java/com/shilapi/xcertplay/PhoneBluetoothReceiver.kt
+@@ -14,8 +14,7 @@
+ class PhoneBluetoothReceiver : BroadcastReceiver() {
+     override fun onReceive(context: Context, intent: Intent) {
+         if (intent.action != BluetoothDevice.ACTION_ACL_CONNECTED ||
+-            !DiPlayPreferences.connectOnPhoneBluetooth(context) ||
+-            CarPlayBackgroundSession.hasSession()) return
++            !DiPlayPreferences.connectOnPhoneBluetooth(context)) return
+         val selected = DiPlayPreferences.phoneAddress(context) ?: return
+         if (Build.VERSION.SDK_INT >= 31 &&
+             context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return
+@@ -27,6 +26,10 @@
+         } ?: return
+         val address = runCatching { device.address }.getOrNull() ?: return
+         if (!address.equals(selected, ignoreCase = true)) return
++        // A failed connection can retain its owner and notification. Resume that owner rather
++        // than opening a second controller. A healthy or still-starting session stays untouched.
++        val existing = CarPlayBackgroundSession.hasSession()
++        if (existing && !CarPlayBackgroundSession.canResumeForPhone()) return
+ 
+         // The car can send several ACL events during one wake-up. Commit before launching so
+         // another receiver instance cannot open a second connection from the same event burst.
+@@ -35,6 +38,10 @@
+         val previous = prefs.getLong("last_launch_elapsed", 0)
+         if (prefs.contains("last_launch_elapsed") && now >= previous && now - previous < 15_000) return
+         prefs.edit().putLong("last_launch_elapsed", now).commit()
++        if (existing) {
++            if (CarPlayBackgroundSession.resumeForPhone()) PhoneWakeDiagnostics.record(context, "recovery-requested")
++            return
++        }
+         PhoneWakeDiagnostics.record(context, "matched")
+         val launch = Intent(context, DiPlayActivity::class.java).apply {
+             putExtra(EXTRA_AUTO_CONNECT, true)
+--- /dev/null
++++ b/common/src/main/java/com/shilapi/xcertplay/SessionPowerLocks.kt
+@@ -0,0 +1,37 @@
++package com.shilapi.xcertplay
++
++import android.annotation.SuppressLint
++import android.content.Context
++import android.net.wifi.WifiManager
++import android.os.PowerManager
++import android.util.Log
++
++/** Owned by the explicit connection's foreground service, including background recovery. */
++internal class SessionPowerLocks(context: Context) {
++    private val cpu = (context.getSystemService(Context.POWER_SERVICE) as PowerManager)
++        .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DiPlay:CarPlaySession").apply { setReferenceCounted(false) }
++    @Suppress("DEPRECATION")
++    private val wifi = (context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager)
++        .createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "DiPlay:CarPlayWireless").apply { setReferenceCounted(false) }
++
++    // The foreground service releases on Disconnect, task removal and destruction. A fixed
++    // timeout would silently drop an ongoing journey; these locks never create a new session.
++    @SuppressLint("WakelockTimeout")
++    fun acquire(wireless: Boolean) {
++        try {
++            if (!cpu.isHeld) cpu.acquire()
++            if (wireless) {
++                if (!wifi.isHeld) wifi.acquire()
++            } else if (wifi.isHeld) wifi.release()
++        } catch (error: RuntimeException) {
++            Log.w("DiPlaySessionPower", "Session power lock unavailable: ${error.javaClass.simpleName}")
++        }
++    }
++
++    fun release() {
++        runCatching { if (wifi.isHeld) wifi.release() }
++            .onFailure { Log.w("DiPlaySessionPower", "Wi-Fi lock release failed: ${it.javaClass.simpleName}") }
++        runCatching { if (cpu.isHeld) cpu.release() }
++            .onFailure { Log.w("DiPlaySessionPower", "CPU lock release failed: ${it.javaClass.simpleName}") }
++    }
++}
+--- a/common/src/test/java/com/shilapi/xcertplay/PhoneBluetoothReceiverTest.kt
++++ b/common/src/test/java/com/shilapi/xcertplay/PhoneBluetoothReceiverTest.kt
+@@ -12,6 +12,7 @@
+ import org.robolectric.RobolectricTestRunner
+ import org.robolectric.RuntimeEnvironment
+ import org.robolectric.annotation.Config
++import org.robolectric.util.ReflectionHelpers
+ 
+ @RunWith(RobolectricTestRunner::class)
+ @Config(sdk = [29])
+@@ -53,4 +54,50 @@
+         assertTrue(launches.single().getBooleanExtra(PhoneBluetoothReceiver.EXTRA_AUTO_CONNECT, false))
+         assertTrue(PhoneWakeDiagnostics.report(app).contains("result=startActivity-returned"))
+     }
++
++    @Test fun selectedPhoneResumesLostOwnerOnceAndLeavesHealthyOwnerAlone() {
++        var recoveries = 0
++        val launches = mutableListOf<Intent>()
++        val context = object : ContextWrapper(app) {
++            override fun startActivity(intent: Intent) { launches += intent }
++        }
++        val owner = Any()
++        val stop: (() -> Unit) -> Unit = { complete -> CarPlayBackgroundSession.clear(); complete() }
++        val wake: () -> Unit = { recoveries++ }
++        ReflectionHelpers.setField(CarPlayBackgroundSession, "owner", owner)
++        ReflectionHelpers.setField(CarPlayBackgroundSession, "stopAction", stop)
++        ReflectionHelpers.setField(CarPlayBackgroundSession, "phoneWakeAction", wake)
++        DiPlayPreferences.saveConnectOnPhoneBluetooth(app, true)
++        val receiver = PhoneBluetoothReceiver()
++        receiver.onReceive(context, event(selected))
++        assertEquals(0, recoveries)
++        CarPlayBackgroundSession.allowPhoneRecovery(owner, true)
++        receiver.onReceive(context, event("AA:BB:CC:DD:EE:FF"))
++        receiver.onReceive(context, event(selected))
++        receiver.onReceive(context, event(selected))
++        assertEquals(1, recoveries)
++        assertTrue(launches.isEmpty())
++        assertTrue(PhoneWakeDiagnostics.report(app).contains("result=recovery-requested"))
++    }
++
++    @Test fun disconnectInProgressCannotBeRearmedByBluetooth() {
++        var recoveries = 0
++        var finishStop: (() -> Unit)? = null
++        val owner = Any()
++        val stop: (() -> Unit) -> Unit = { complete -> finishStop = complete }
++        val wake: () -> Unit = { recoveries++ }
++        ReflectionHelpers.setField(CarPlayBackgroundSession, "owner", owner)
++        ReflectionHelpers.setField(CarPlayBackgroundSession, "stopAction", stop)
++        ReflectionHelpers.setField(CarPlayBackgroundSession, "phoneWakeAction", wake)
++        CarPlayBackgroundSession.allowPhoneRecovery(owner, true)
++        DiPlayPreferences.saveConnectOnPhoneBluetooth(app, true)
++        CarPlayBackgroundSession.stop()
++        try {
++            PhoneBluetoothReceiver().onReceive(app, event(selected))
++            assertEquals(0, recoveries)
++        } finally {
++            CarPlayBackgroundSession.clear()
++            finishStop?.invoke()
++        }
++    }
+ }
+--- /dev/null
++++ b/common/src/test/java/com/shilapi/xcertplay/SessionPowerLocksTest.kt
+@@ -0,0 +1,64 @@
++package com.shilapi.xcertplay
++
++import android.content.Intent
++import android.net.wifi.WifiManager
++import android.os.PowerManager
++import org.junit.After
++import org.junit.Assert.*
++import org.junit.Before
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.robolectric.Robolectric
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.annotation.Config
++import org.robolectric.android.controller.ServiceController
++import org.robolectric.util.ReflectionHelpers
++
++@RunWith(RobolectricTestRunner::class)
++@Config(sdk = [25, 29], manifest = Config.NONE)
++class SessionPowerLocksTest {
++    private lateinit var service: DiPlaySessionService
++    private lateinit var lifecycle: ServiceController<DiPlaySessionService>
++
++    @Before fun setup() {
++        CarPlayBackgroundSession.clear()
++        lifecycle = Robolectric.buildService(DiPlaySessionService::class.java).create()
++        service = lifecycle.get()
++    }
++    @After fun cleanup() { lifecycle.destroy(); CarPlayBackgroundSession.clear() }
++
++    private fun ownsSession() {
++        val stop: (() -> Unit) -> Unit = { complete -> CarPlayBackgroundSession.clear(); complete() }
++        ReflectionHelpers.setField(CarPlayBackgroundSession, "stopAction", stop)
++    }
++    private fun start(wireless: Boolean = true) = service.onStartCommand(
++        Intent(service, DiPlaySessionService::class.java).putExtra(DiPlaySessionService.EXTRA_WIRELESS, wireless), 0, 1)
++    private fun held(): Pair<Boolean, Boolean> {
++        val field = DiPlaySessionService::class.java.getDeclaredField("powerLocks\$delegate").apply { isAccessible = true }
++        val power = (field.get(service) as Lazy<*>).value!!
++        return ReflectionHelpers.getField<PowerManager.WakeLock>(power, "cpu").isHeld to
++            ReflectionHelpers.getField<WifiManager.WifiLock>(power, "wifi").isHeld
++    }
++
++    @Test fun unownedServiceCannotHoldPowerOrCreateConnection() {
++        start()
++        assertEquals(false to false, held())
++        assertFalse(CarPlayBackgroundSession.hasSession())
++    }
++    @Test fun repeatedStartsAndWiredSwitchDoNotLeakLocks() {
++        ownsSession()
++        start(); start()
++        assertEquals(true to true, held())
++        start(wireless = false)
++        assertEquals(true to false, held())
++        service.onStartCommand(Intent().setAction(DiPlaySessionService.ACTION_STOP), 0, 2)
++        assertEquals(false to false, held())
++        assertFalse(CarPlayBackgroundSession.hasSession())
++    }
++    @Test fun destructionReleasesBothResources() {
++        ownsSession(); start()
++        assertEquals(true to true, held())
++        service.onDestroy()
++        assertEquals(false to false, held())
++    }
++}
+--- a/common/src/test/java/com/shilapi/xcertplay/WirelessStartupRecoveryTest.kt
++++ b/common/src/test/java/com/shilapi/xcertplay/WirelessStartupRecoveryTest.kt
+@@ -12,12 +12,15 @@
+ import org.junit.Test
+ import org.junit.runner.RunWith
+ import org.robolectric.Robolectric
++import org.robolectric.RuntimeEnvironment
++import org.robolectric.Shadows.shadowOf
+ import org.robolectric.RobolectricTestRunner
+ import org.robolectric.annotation.Config
+ import org.robolectric.annotation.LooperMode
+ import org.robolectric.util.ReflectionHelpers
+ import org.robolectric.util.ReflectionHelpers.ClassParameter.from
+ import java.util.concurrent.atomic.AtomicBoolean
++import java.time.Duration
+ 
+ @RunWith(RobolectricTestRunner::class)
+ @Config(sdk = [29], qualifiers = "en", manifest = Config.NONE)
+@@ -29,6 +32,7 @@
+ 
+     @Before fun setup() {
+         CarPlayBackgroundSession.clear()
++        DiPlayPreferences.saveConnectOnPhoneBluetooth(RuntimeEnvironment.getApplication(), false)
+         activity = Robolectric.buildActivity(CarPlayHostActivity::class.java).get()
+         activity.setTheme(android.R.style.Theme_Material_NoActionBar)
+         ReflectionHelpers.setField(CarPlayBackgroundSession, "owner", activity)
+@@ -76,6 +80,80 @@
+         assertEquals(View.VISIBLE, retry.visibility)
+     }
+ 
++    private fun allowOwnerWake() {
++        val stop: (() -> Unit) -> Unit = { complete -> CarPlayBackgroundSession.clear(); complete() }
++        val wake: () -> Unit = { activity.resumeLostSessionForPhone() }
++        ReflectionHelpers.setField(CarPlayBackgroundSession, "stopAction", stop)
++        ReflectionHelpers.setField(CarPlayBackgroundSession, "phoneWakeAction", wake)
++    }
++
++    @Test fun endedControlChannelSchedulesOneRetry() {
++        report(status = CarPlayStatus.ControlEnded)
++        report(status = CarPlayStatus.ControlEnded)
++        assertTrue(ReflectionHelpers.getField(activity, "reconnectScheduled"))
++        assertEquals(1, ReflectionHelpers.getField<Int>(activity, "reconnectAttempts"))
++        assertFalse(CarPlayBackgroundSession.active)
++    }
++
++    @Test fun phoneReturnResumesExhaustedOwnerWithoutReplacingHealthySession() {
++        allowOwnerWake()
++        DiPlayPreferences.saveConnectOnPhoneBluetooth(activity, true)
++        DiPlayPreferences.savePhone(activity, "12:34:56:78:9A:BC", "test phone")
++        assertFalse(CarPlayBackgroundSession.resumeForPhone())
++        repeat(6) { generation ->
++            ReflectionHelpers.setField(activity, "restartGeneration", generation)
++            ReflectionHelpers.setField(activity, "reconnectScheduled", false)
++            report(generation)
++        }
++        assertTrue(ReflectionHelpers.getField(activity, "startupRetryStopped"))
++        assertTrue(CarPlayBackgroundSession.resumeForPhone())
++        assertFalse(ReflectionHelpers.getField(activity, "startupRetryStopped"))
++        assertEquals(0, budget().retries)
++        assertTrue(ReflectionHelpers.getField(activity, "reconnectScheduled"))
++        assertEquals(1, ReflectionHelpers.getField<Int>(activity, "reconnectAttempts"))
++        CarPlayBackgroundSession.stop()
++        assertFalse(CarPlayBackgroundSession.resumeForPhone())
++    }
++
++    @Test fun cleanupErrorCannotMakeConfigurationFailureAutoRetryable() {
++        allowOwnerWake()
++        report(status = CarPlayStatus.Failed("Permission missing", startupFailure = WirelessStartupFailure.HOTSPOT_CONFIGURATION))
++        report(status = CarPlayStatus.Failed("Bluetooth socket closed during cleanup"))
++        assertFalse(CarPlayBackgroundSession.canResumeForPhone())
++        assertFalse(ReflectionHelpers.getField(activity, "reconnectScheduled"))
++    }
++
++    @Test fun cooldownRetriesOptedInPhoneButRejectsStaleGeneration() {
++        allowOwnerWake()
++        DiPlayPreferences.saveConnectOnPhoneBluetooth(activity, true)
++        DiPlayPreferences.savePhone(activity, "12:34:56:78:9A:BC", "test phone")
++        repeat(6) { generation ->
++            ReflectionHelpers.setField(activity, "restartGeneration", generation)
++            ReflectionHelpers.setField(activity, "reconnectScheduled", false)
++            report(generation)
++        }
++        // A newer connection owns recovery before the previous burst's cooldown expires.
++        ReflectionHelpers.setField(activity, "restartGeneration", 6)
++        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(90))
++        assertTrue(ReflectionHelpers.getField(activity, "startupRetryStopped"))
++        assertFalse(ReflectionHelpers.getField(activity, "reconnectScheduled"))
++    }
++
++    @Test fun cooldownResumesWhenPhoneWakeBroadcastIsMissing() {
++        allowOwnerWake()
++        DiPlayPreferences.saveConnectOnPhoneBluetooth(activity, true)
++        DiPlayPreferences.savePhone(activity, "12:34:56:78:9A:BC", "test phone")
++        repeat(6) { generation ->
++            ReflectionHelpers.setField(activity, "restartGeneration", generation)
++            ReflectionHelpers.setField(activity, "reconnectScheduled", false)
++            report(generation)
++        }
++        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(90))
++        assertFalse(ReflectionHelpers.getField(activity, "startupRetryStopped"))
++        assertEquals(0, budget().retries)
++        assertTrue(ReflectionHelpers.getField(activity, "reconnectScheduled"))
++    }
++
+     @Test fun staleGenerationUserDisconnectMenuAndDifferentOwnerCannotSchedule() {
+         report(1)
+         assertEquals(0, budget().retries)
+--- a/mobile/build.gradle.kts
++++ b/mobile/build.gradle.kts
+@@ -14,11 +14,11 @@
+     }
+ 
+     defaultConfig {
+-        applicationId = "com.shihab.diplay.cn"
++        applicationId = "com.shihab.diplay.cn.landscape"
+         minSdk = 25
+         targetSdk = 37
+-        versionCode = 111
+-        versionName = "0.2.17-cn.2"
++        versionCode = 112
++        versionName = "0.2.17-cn.2-landscape.3"
+ 
+     }
+ 
+--- a/mobile/src/main/res/values/strings.xml
++++ b/mobile/src/main/res/values/strings.xml
+@@ -1,5 +1,5 @@
+ <resources>
+-    <string name="app_name">DiPlay CN</string>
++    <string name="app_name">DiPlay 横屏修正版</string>
+ 
+     <!-- Launcher-alias labels: the name shown in the car's app list. Fixed texts; Android
+          cannot change an installed app's label to free text. -->
+--- a/shared/src/main/java/com/shilapi/xcertplay/network/TcpLiveness.kt
++++ b/shared/src/main/java/com/shilapi/xcertplay/network/TcpLiveness.kt
+@@ -4,6 +4,7 @@
+ import android.os.ParcelFileDescriptor
+ import android.system.Os
+ import android.system.OsConstants
++import java.io.FileDescriptor
+ import java.net.Socket
+ 
+ /** Detect a vanished peer, without treating a legitimately idle CarPlay screen as a failure. */
+@@ -12,21 +13,33 @@
+     private const val TCP_KEEPIDLE = 4
+     private const val TCP_KEEPINTVL = 5
+     private const val TCP_KEEPCNT = 6
++    private const val TCP_USER_TIMEOUT = 18
+     fun configure(socket: Socket, diagnostic: (String) -> Unit) {
+-        socket.keepAlive = true
+-        // Before 29, fromSocket owns the original descriptor rather than a duplicate.
+-        if (Build.VERSION.SDK_INT < 29) return
+         try {
+-            ParcelFileDescriptor.fromSocket(socket).use { duplicate ->
++            socket.keepAlive = true
++            duplicateSocket(socket).use { duplicate ->
+                 val fd = duplicate.fileDescriptor
+-                Os.setsockoptInt(fd, OsConstants.IPPROTO_TCP, TCP_KEEPIDLE, 10)
+-                Os.setsockoptInt(fd, OsConstants.IPPROTO_TCP, TCP_KEEPINTVL, 3)
+-                Os.setsockoptInt(fd, OsConstants.IPPROTO_TCP, TCP_KEEPCNT, 3)
+-                Os.setsockoptInt(fd, OsConstants.IPPROTO_TCP, OsConstants.TCP_USER_TIMEOUT, 20_000)
+-                diagnostic("TCP peer health enabled idle=10s interval=3s count=3 deadline=20000ms; no video-idle timeout")
++                // Allow brief Wi-Fi power-save gaps. An idle picture is never a failure signal.
++                Os.setsockoptInt(fd, OsConstants.IPPROTO_TCP, TCP_KEEPIDLE, 30)
++                Os.setsockoptInt(fd, OsConstants.IPPROTO_TCP, TCP_KEEPINTVL, 5)
++                Os.setsockoptInt(fd, OsConstants.IPPROTO_TCP, TCP_KEEPCNT, 6)
++                // Some older vendor kernels lack this option; keep the probes already installed.
++                val deadline = runCatching {
++                    Os.setsockoptInt(fd, OsConstants.IPPROTO_TCP, TCP_USER_TIMEOUT, 60_000)
++                }.isSuccess
++                diagnostic("TCP peer health enabled idle=30s interval=5s count=6 deadline=${if (deadline) "60000ms" else "kernel default"}; no video-idle timeout")
+             }
+         } catch (failure: Exception) {
+             diagnostic("TCP peer health tuning unavailable: ${failure.javaClass.simpleName}")
+         }
+     }
++
++    private fun duplicateSocket(socket: Socket): ParcelFileDescriptor {
++        if (Build.VERSION.SDK_INT >= 29) return ParcelFileDescriptor.fromSocket(socket)
++        // Android 7's fromSocket wraps the original fd. Closing that wrapper kills CarPlay.
++        // Reflection is restricted on API 28; fall back to ordinary keepalive there if denied.
++        val original = Socket::class.java.getDeclaredMethod("getFileDescriptor\$")
++            .invoke(socket) as FileDescriptor
++        return ParcelFileDescriptor.dup(original)
++    }
+ }

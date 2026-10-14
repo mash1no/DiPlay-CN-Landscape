@@ -1,72 +1,52 @@
-# DiPlay CN Landscape · 固定横屏实验版
+# DiPlay CN Landscape · 横屏与连接恢复实验版
 
-给 Android 端 DiPlay 的 CarPlay 界面固定一个横屏方向。默认使用 `reverseLandscape`，避免随手机传感器在横竖屏之间切换。
+CarPlay 界面固定为 `reverseLandscape`，并加固无线会话保活与掉线恢复。当前版本为 **0.2.17-cn.2-landscape.3**，以预发布形式提供。
 
-本项目基于 [serein-morii/DiPlay-CN](https://github.com/serein-morii/DiPlay-CN) 的 **v0.2.17-cn.2**，是独立的 Manifest 重打包工具和实验性发布。原项目作者及贡献者保留其署名和权利；本项目遵循 **GPL-3.0**，不是原作者官方版本。
+基于 [serein-morii/DiPlay-CN](https://github.com/serein-morii/DiPlay-CN) 的 v0.2.17-cn.2，上游源码固定到提交 [`48a8330e86926ad69647f0eed0bcb349264b8bec`](https://github.com/serein-morii/DiPlay-CN/tree/48a8330e86926ad69647f0eed0bcb349264b8bec)。保留原作者及贡献者署名，修改遵循 [GPL-3.0](LICENSE)。这是独立实验版本。
 
 ## 下载与源码
 
-- 在本仓库 **Releases** 下载 `DiPlay-cn-v0.2.17-cn.2-landscape.2.apk`。
-- 本仓库 `build_variant.py` 公开本地修改的完整构建脚本。
-- 同一 Release 提供 `DiPlay-CN-landscape.2-corresponding-source.zip`，包含固定版本的上游应用源码、许可证、本构建脚本、源代码方向补丁和说明。
-- 上游源码固定到提交 [`48a8330e86926ad69647f0eed0bcb349264b8bec`](https://github.com/serein-morii/DiPlay-CN/tree/48a8330e86926ad69647f0eed0bcb349264b8bec)。源码包不包含本项目发布签名私钥；构建者使用自己的签名。
+- [landscape.3 预发布及 APK](https://github.com/mash1no/DiPlay-CN-Landscape/releases/tag/v0.2.17-cn.2-landscape.3)
+- [完整对应源码包](DiPlay-CN-landscape.3-corresponding-source.zip)，包含上游源码、修改和 Gradle 构建文件。
+- [本次代码补丁](stability.patch)、[构建方法](BUILDING.md)、[构建入口](build_stability.py)。
+- [验证记录](verification.json)及 [APK / 源码 SHA-256](SHA256SUMS)。
 
-## 修改范围
+源码包不包含发布签名私钥或本地认证输入。源码构建和可直接连接 CarPlay 的独立构建分别说明在 [BUILDING.md](BUILDING.md)。根目录的旧 `build_variant.py` 对应 landscape.2；构建 landscape.3 请使用上述新入口。
 
-| 项目 | 上游 APK | 本实验版 |
+## 本次修改
+
+具体实现见 [stability.patch](stability.patch)：
+
+- CarPlay Activity 固定反向横屏，应用 ID 为 `com.shihab.diplay.cn.landscape`。
+- 为无线 TCP 连接设置保活参数，并对不支持的系统调用保留兼容回退；不以画面静止作为断线判据。
+- 活跃会话的前台服务持有 CPU / 无线 Wi-Fi 锁，在停止会话时释放。
+- 旧会话失败后进行有限次数恢复，防止多个控制器重复接管；开启自动连接时允许后续退避重试。
+- 已选 iPhone 的蓝牙连接事件可请求恢复失败会话，保留防重复触发、用户主动断开和健康会话保护。
+
+## 2026-10-14 实机结果
+
+测试设备为 **HONOR 70 / FNE-AN00，Android 14 / API 34，arm64-v8a**。无线链路使用安卓系统 **5 GHz / WPA2 热点**，蓝牙完成 iAP2 启动。iPhone 型号和 iOS 版本未记录。每项为一次观察，详细时间和范围见 [verification.json](verification.json)。
+
+| 场景 | 本轮结果 | 观察范围 |
 | --- | --- | --- |
-| CarPlay Activity 方向 | `fullSensor` / 10 | `reverseLandscape` / 8 |
-| 应用 ID | `com.shihab.diplay.cn` | `com.shihab.diplay.cn.landscape` |
-| 启动器名称 | DiPlay | DiPlay 横屏修正版 |
-| 版本名 | `0.2.17-cn.2` | `0.2.17-cn.2-landscape.2` |
+| 安卓在横竖方向之间转动 | CarPlay 始终横屏，未观察到会话重建；用户确认没有重连 | 要求竖持 / 横持各约 5 秒，重复 3 次；日志窗口 90 秒，系统自动旋转开启 |
+| iPhone 锁屏后解锁 | 用户确认没有断连；日志持续有画面帧，未观察到会话重建 | 要求锁屏至少 2 分钟，再解锁；日志窗口 180 秒；允许锁定时使用 CarPlay 已开启 |
+| iPhone Wi-Fi 和蓝牙关闭约 10 秒后恢复 | 用户确认自动连上；应用自行重建会话并恢复首帧 | 日志窗口 180 秒；检测到旧会话失败至恢复首帧 10.488 秒，用户开启无线的准确时间未记录 |
+| 关闭进程后重新打开 DiPlay | 未按连接按钮，应用自动建立 CarPlay 会话并恢复画面 | 冷启动，日志窗口 90 秒；热点已经开启 |
 
-重打包保留 **413 个非签名条目**的原始内容，包括 DEX、资源、原生库和原有运行时资源。没有修改蓝牙协议、Wi-Fi Direct、音频或认证代码。仅修改二进制 Manifest 并重新签名；没有重新编译上游 Android 应用。
+独立的“安卓停在桌面，iPhone 蓝牙连接触发应用启动”尚未获得合格的实机通过证据。一次观察中用户曾点过安卓 DiPlay 图标，因此不能把该次连接算作蓝牙唤醒通过。
 
-不同横屏方向可用构建脚本的 `--orientation landscape` 参数选择。公开下载的 APK 固定为 `reverseLandscape`。
+## 使用与已知限制
 
-## 安装与连接
+1. 安装 Release 中的 APK，完成首次 iPhone 蓝牙配对和 CarPlay 授权。
+2. 选择目标 iPhone，开启“打开 DiPlay 时连接”，默认模式选“无线”。独立应用 ID 不继承原版私有设置。
+3. 对本次 HONOR 测试采用的连接方式：先开启安卓系统热点，设置 5 GHz，在 DiPlay 中选择手动热点并填写同一热点的名称与密码。iPhone 保持蓝牙与 Wi-Fi 开启，关闭个人热点。
+4. iPhone 中“允许在锁定时使用 CarPlay”应保持开启。配置入口参考 [Apple CarPlay 设置说明](https://support.apple.com/zh-cn/108415)。
 
-1. 下载 APK，在安卓设备上确认安装；保留原版安装和数据可以便于回退。
-2. 两个 DiPlay 版本不要同时自动连接同一 iPhone。先关闭原版的自动连接并停止原版，再使用“DiPlay 横屏修正版”。
-3. 在修正版选择目标 iPhone，设置无线连接方式并完成首次蓝牙和 CarPlay 授权。安卓无 SIM 卡也可建立 CarPlay 链路，联网内容由 iPhone 及所选网络提供。
-4. 按需开启“打开 DiPlay 时连接”和“已选 iPhone 重连蓝牙时自动连接”，默认模式选择“无线”。首次安装的独立应用 ID 不会自动继承原版私有设置。
-5. 使用 Wi-Fi Direct 时避免同时把安卓连到同一 iPhone 的个人热点。具体步骤参考[上游连接说明](https://github.com/serein-morii/DiPlay-CN/blob/v0.2.17-cn.2/docs/CONNECTION_SETUP.md)。
+本次 HONOR 的 Wi-Fi Direct 建组返回了非预期组，未能连接；上述通过结果来自安卓系统热点。启动热点、重启后自动运行、后台掉线恢复、新手机上的车载音频路由及其他型号均未完成实机验证。短时通过不能证明偶发断线彻底消失，也不能替代长期车载测试。
 
-需覆盖更新时使用相同的签名；本项目签名与官方签名不同，因此使用独立应用 ID。卸载会删除该应用的设置。
+## 构建检查
 
-## 验证与已知问题
+[验证记录](verification.json)中记录：签名独立 Release 构建成功，mobile / home / maphost Debug 打包完成，Lint 0 错误，新增 18 项回归测试 0 失败。完整测试并非全绿：shared / common 共 3 项双栈网络测试失败，同样的失败已在未修改的上游源码复现，根因未确定。
 
-公开 APK 已完成 JAR 签名校验、ZIP 完整性、Manifest 方向校验、保留条目内容比较及原生库 4096 字节对齐检查，并在 Android 7.1.2 设备上安装，ADB 返回 `Success`。记录见 [verification.json](verification.json)，下载校验值见 [SHA256SUMS](SHA256SUMS)。
-
-**以下尚未完成验证，不能视为已修复：**
-
-- 最终 `reverseLandscape` 版本在实机连续转动时是否始终不重连。
-- iPhone 熄屏后偶发断连，以及长时间无线运行的稳定性。
-- Wi-Fi 和蓝牙完全断开后，从后台自动恢复会话。
-- 其他安卓型号、Android 版本、音频设备和车载环境。
-
-本版本的固定方向用于移除屏幕旋转这一触发因素；它不是无线链路稳定性补丁。应用保活、安卓 Wi-Fi 休眠策略和系统电池优化属于设备配置，本 APK 不会自动替用户修改它们。未执行上游 Gradle 全套 CI；本次验证针对重打包流程，不等同于上游源码重新编译通过。
-
-## 复现构建
-
-需要 Python 3.9+、JDK 17 和 Android SDK 的 `aapt2`。脚本只使用 Python 标准库。
-
-```sh
-python3 build_variant.py --download --java-home /path/to/jdk-17 --aapt2 /path/to/android-sdk/build-tools/aapt2
-```
-
-也可以使用已经下载的官方 APK：
-
-```sh
-python3 build_variant.py --input /path/to/DiPlay-cn-v0.2.17-cn.2.apk --java-home /path/to/jdk-17 --aapt2 /path/to/aapt2
-```
-
-脚本强制核对官方 APK 的 SHA-256，然后修改 Manifest、使用本地签名并完成最小充分检查。输出在 `dist/`；本地签名文件和随机口令也在此目录，该目录被 Git 忽略。请自行保管签名以便后续更新。可以通过 `DIPLAY_SIGNING_PASSWORD` 环境变量提供自己的签名口令；不要提交该变量或私钥。
-
-公开 APK 与重建 APK 因签名密钥及签名时间可能有不同 SHA-256；可复现的是修改范围和保留条目的内容，不能承诺逐字节一致。
-
-源代码方向补丁见 `manifest-orientation.patch`。直接编译上游应用需按上游说明配置 SDK 和运行时资源；普通源码构建不自动提供独立 CarPlay 认证身份。不要把个人认证材料或签名私钥提交到仓库。
-
-## 许可证与致谢
-
-本项目和修改遵循 [GNU GPL v3](LICENSE)。感谢 [serein-morii/DiPlay-CN](https://github.com/serein-morii/DiPlay-CN) 及其上游贡献者。分发二进制时请保留许可证、修改说明和相应源码获取途径。
+APK 已完成签名、版本 / 方向和 16 KiB 原生库 ZIP 对齐检查；本次只在 arm64-v8a 新手机上验证运行。分发时请同时提供许可证和完整对应源码。感谢 DiPlay-CN 及其上游贡献者。
