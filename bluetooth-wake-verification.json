@@ -1,0 +1,40 @@
+{
+  "recorded_at": "2026-10-14T22:35:57.977331+08:00",
+  "record_type": "supplement to the original landscape.3 verification.json",
+  "version": "0.2.17-cn.2-landscape.3",
+  "code_change_since_original_release": false,
+  "apk_rebuilt": false,
+  "android_model": "HONOR 70 / FNE-AN00",
+  "android_version": "14",
+  "api": 34,
+  "iphone_model": "not recorded",
+  "ios_version": "not recorded",
+  "transport": "Android system 5 GHz hotspot; Bluetooth iAP2 bootstrap",
+  "configuration_change": "Display over other apps enabled through normal system UI with explicit user approval",
+  "permission_before_result": "Background activity launch blocked; paired Bluetooth alone did not open DiPlay",
+  "permission_after_test": {
+    "result": "passed_this_observation",
+    "procedure": "Android remained on desktop. User disabled iPhone Bluetooth approximately 5 seconds, re-enabled and connected the paired Android; Wi-Fi stayed on. No Android app icon or manual ADB app launch.",
+    "observer_started": "2026-10-14T22:28:37.687734+08:00",
+    "observer_finished": "2026-10-14T22:33:37.692439+08:00",
+    "duration_seconds": 300,
+    "launch_source": "DiPlay application UID with Bluetooth receiver intent, following ACL_CONNECTED",
+    "manual_app_launch_events": 0,
+    "receiver_start_time_local": "22:29:49.230",
+    "first_frame_time_local": "22:29:53.204",
+    "time_zone": "Asia/Shanghai",
+    "video_stats_samples": 44,
+    "all_samples_have_rendered_frames": true,
+    "reconnect_or_failure_events": 0,
+    "screen_size": [
+      2400,
+      1080
+    ],
+    "user_confirmation": "自行打开并连上 CarPlay"
+  },
+  "limits": [
+    "One wake event on HONOR 70/Android 14 with paired selected iPhone and Android 5 GHz system hotspot already enabled. Does not cover boot, Wi-Fi Direct, other phones or failed retained-session recovery in background.",
+    "User must opt in to selected-phone Bluetooth auto-connect and this special display permission; installing the APK does not automatically grant it",
+    "Long-duration and other-device reliability remain untested"
+  ]
+}

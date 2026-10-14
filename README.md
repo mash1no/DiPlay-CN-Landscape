@@ -25,7 +25,7 @@ CarPlay 界面固定为 `reverseLandscape`，并加固无线会话保活与掉�
 
 ## 2026-10-14 实机结果
 
-测试设备为 **HONOR 70 / FNE-AN00，Android 14 / API 34，arm64-v8a**。无线链路使用安卓系统 **5 GHz / WPA2 热点**，蓝牙完成 iAP2 启动。iPhone 型号和 iOS 版本未记录。每项为一次观察，详细时间和范围见 [verification.json](verification.json)。
+测试设备为 **HONOR 70 / FNE-AN00，Android 14 / API 34，arm64-v8a**。无线链路使用安卓系统 **5 GHz / WPA2 热点**，蓝牙完成 iAP2 启动。iPhone 型号和 iOS 版本未记录。每项为一次观察，四项初始测试见 [verification.json](verification.json)，蓝牙启动补充结果见 [bluetooth-wake-verification.json](bluetooth-wake-verification.json)。
 
 | 场景 | 本轮结果 | 观察范围 |
 | --- | --- | --- |
@@ -33,8 +33,9 @@ CarPlay 界面固定为 `reverseLandscape`，并加固无线会话保活与掉�
 | iPhone 锁屏后解锁 | 用户确认没有断连；日志持续有画面帧，未观察到会话重建 | 要求锁屏至少 2 分钟，再解锁；日志窗口 180 秒；允许锁定时使用 CarPlay 已开启 |
 | iPhone Wi-Fi 和蓝牙关闭约 10 秒后恢复 | 用户确认自动连上；应用自行重建会话并恢复首帧 | 日志窗口 180 秒；检测到旧会话失败至恢复首帧 10.488 秒，用户开启无线的准确时间未记录 |
 | 关闭进程后重新打开 DiPlay | 未按连接按钮，应用自动建立 CarPlay 会话并恢复画面 | 冷启动，日志窗口 90 秒；热点已经开启 |
+| 安卓停在桌面，仅操作 iPhone 蓝牙 | DiPlay 自行打开并连接 CarPlay；启动来源为应用自身 | 本机用户已允许显示在其他应用上层；补充记录单独提供 |
 
-独立的“安卓停在桌面，iPhone 蓝牙连接触发应用启动”尚未获得合格的实机通过证据。一次观察中用户曾点过安卓 DiPlay 图标，因此不能把该次连接算作蓝牙唤醒通过。
+**补充验证：蓝牙从安卓桌面自动打开已在本次配置下通过。** 用户明确允许 DiPlay“在其他应用上层显示”后，只在 iPhone 关闭 / 开启蓝牙并连接已配对安卓；用户确认 DiPlay 自行打开并进入 CarPlay。日志显示蓝牙连接事件后由 DiPlay 自身 UID 启动界面并恢复首帧，未出现系统桌面或 ADB 手动启动应用的记录。详见 [蓝牙启动补充验证](bluetooth-wake-verification.json)。此前关闭这项权限时，系统记录了后台启动拦截。
 
 ## 使用与已知限制
 
@@ -43,7 +44,9 @@ CarPlay 界面固定为 `reverseLandscape`，并加固无线会话保活与掉�
 3. 对本次 HONOR 测试采用的连接方式：先开启安卓系统热点，设置 5 GHz，在 DiPlay 中选择手动热点并填写同一热点的名称与密码。iPhone 保持蓝牙与 Wi-Fi 开启，关闭个人热点。
 4. iPhone 中“允许在锁定时使用 CarPlay”应保持开启。配置入口参考 [Apple CarPlay 设置说明](https://support.apple.com/zh-cn/108415)。
 
-本次 HONOR 的 Wi-Fi Direct 建组返回了非预期组，未能连接；上述通过结果来自安卓系统热点。自动开启热点、重启后自动运行、后台掉线恢复、新手机上的车载音频路由及其他型号均未完成实机验证。短时通过不能证明偶发断线彻底消失，也不能替代长期车载测试。
+需要从安卓桌面由蓝牙启动时，开启“已选 iPhone 重连蓝牙时自动连接”。本次 HONOR / Android 14 还需用户在系统“特殊应用访问 → 显示在其他应用的上层 → DiPlay”中允许显示权限；该权限允许应用覆盖其他应用界面，应由使用者按需要授权。对应系统规则见 [Android 后台启动说明](https://developer.android.com/guide/components/activities/secure-bal)。本次测试的热点已经开启，不能据此承诺重启后自动开启热点。
+
+本次 HONOR 的 Wi-Fi Direct 建组返回了非预期组，未能连接；上述通过结果来自安卓系统热点。自动开启热点、重启后自动运行、已有会话在后台掉线后的恢复、新手机上的车载音频路由及其他型号均未完成实机验证。短时通过不能证明偶发断线彻底消失，也不能替代长期车载测试。
 
 ## 构建检查
 
